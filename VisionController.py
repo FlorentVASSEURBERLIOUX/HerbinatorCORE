@@ -1,6 +1,7 @@
 import cv2
 import time
 import random
+import ArduinoCommunicator
 
 class VisionController:
     def __init__(self, camera_index=0):
@@ -10,6 +11,8 @@ class VisionController:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
         self.qr_detector = cv2.QRCodeDetector()
+        
+        self.robot = ArduinoCommunicator(port='/dev/ttyACM0')
 
     def capturer_image(self):
         """Demande une image fraîche à la webcam USB."""
@@ -20,7 +23,7 @@ class VisionController:
         ret, frame = self.cap.read()
         return ret, frame
 
-def chercher_limite_qrcode(self, image):
+    def chercher_limite_qrcode(self, image):
         """
         Recherche un QR code.
         Retourne True et un dictionnaire contenant les données, la taille et la position.
@@ -56,13 +59,13 @@ def chercher_limite_qrcode(self, image):
         certitude_ia = random.uniform(0.0, 100.0) # Test temporaire en attente de l'IA
         
         if certitude_ia >= seuil_certitude:
-            print(f"[IA] True ({certitude_ia:.1f}%)")
+            print(f"[IA] Herbe détectée ! ({certitude_ia:.1f}%)")
             return True
         return False
 
     def lancer_routine_vision(self, fps=1.0):
         """Orchestre la prise d'image et le traitement à 1 image par seconde (1 FPS)."""
-        print(" Démarrage de la routine de vision...")
+        print(" Démarrage de la routine de vision")
         
         try:
             while True:
@@ -74,13 +77,25 @@ def chercher_limite_qrcode(self, image):
                     time.sleep(1)
                     continue
 
-                qr_trouve, qr_data = self.chercher_limite_qrcode(frame)
+                qr_trouve, infos_qr = self.chercher_limite_qrcode(frame)
+                
                 if qr_trouve:
-                    print(f"[QR] True '{qr_data}'")
+                    t = infos_qr["texte"]
+                    w = infos_qr["largeur_px"]
+                    h = infos_qr["hauteur_px"]
+                    x = infos_qr["position_x"]
+                    y = infos_qr["position_y"]
+                    
+                    commande_bordure = f"B:{t}:{w}:{h}:{x}:{y}"
+                    print(f"[QR] Limite détectée ('{t}') - Envoi des coordonnées à l'Arduino.")
+                    
+                    self.robot.send(commande_bordure)
+                    
                 else:
                     herbe_trouvee = self.detecter_mauvaise_herbe(frame, seuil_certitude=85.0)
                     if herbe_trouvee:
-                        print("[ACTION] Pompe à actionner")
+                        print("[ACTION] Cible validée - Envoi de l'ordre de pulvérisation.")
+                        self.robot.send("P")
 
                 processing_time = time.time() - start_time
                 sleep_time = max(0, fps - processing_time)
@@ -92,6 +107,7 @@ def chercher_limite_qrcode(self, image):
                 
         finally:
             self.cap.release()
+            self.robot.fermer_connexion()
 
 if __name__ == '__main__':
     controleur = VisionController()

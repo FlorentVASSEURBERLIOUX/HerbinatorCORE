@@ -2,7 +2,7 @@ import socket
 import json
 import time
 
-def start_bluetooth_server(dict datas):
+def start_bluetooth_server(datas):
     server_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
     port = 1
     
