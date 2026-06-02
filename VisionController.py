@@ -1,6 +1,7 @@
 import cv2
 import time
 import random
+from ultralytics import YOLO
 
 from ArduinoCommunicator import ArduinoCommunicator
 from BluetoothCommunicator import BluetoothCommunicator
@@ -17,6 +18,13 @@ class VisionController:
         self.bluetooth = BluetoothCommunicator(port=1)
         
         self.en_veille = False
+
+        try:
+            self.modele_ia = YOLO("IA/best (1).pt")
+            print("[IA] Modèle chargé !")
+        except Exception as e:
+            print(f"[ERREUR IA] Impossible de charger le modèle : {e}")
+            self.modele_ia = None
 
     def capturer_image(self):
         if not self.cap.isOpened():
@@ -47,11 +55,24 @@ class VisionController:
             
         return False, None
 
-    def detecter_mauvaise_herbe(self, image, seuil_certitude=80.0):
-        certitude_ia = random.uniform(0.0, 100.0) 
-        if certitude_ia >= seuil_certitude:
-            print(f"[IA] Herbe détectée ! ({certitude_ia:.1f}%)")
-            return True
+    def detecter_mauvaise_herbe(self, image, seuil_certitude=0.5):
+        if self.modele_ia is None:
+            return False
+        
+        resultats = self.modele_ia(image, verbose=False)
+        
+        for r in resultats:
+            boites = r.boxes
+            for boite in boites:
+                certitude = float(boite.conf[0]) * 100 
+                
+                if certitude >= seuil_certitude:
+                    print(f"[IA] Herbe ciblée ! (Certitude : {certitude:.1f}%)")
+                    return True
+        
+                print(f"Certitude : {certitude:.1f}%")
+
+                    
         return False
 
     def lancer_routine_vision(self, fps=1.0):
@@ -90,7 +111,7 @@ class VisionController:
                             self.robot.send(f"B:{t}:{w}:{h}:{x}:{y}")
                             telemetrie_app["alerte_qr"] = t
                         else:
-                            herbe_trouvee = self.detecter_mauvaise_herbe(frame, seuil_certitude=85.0)
+                            herbe_trouvee = self.detecter_mauvaise_herbe(frame)
                             if herbe_trouvee:
                                 print("[ACTION] Activation Pompe.")
                                 self.robot.send("P")
@@ -121,6 +142,30 @@ class VisionController:
             self.robot.fermer_connexion()
             self.bluetooth.fermer()
 
+    
+    def tester_ia_seule(self):
+        """Méthode de test minimaliste : Caméra + IA uniquement."""
+        print("\n==================================================")
+        print(" MODE TEST : Caméra et IA (Sans Arduino/Bluetooth)")
+        print("==================================================")
+        try:
+            while True:
+                ret, frame = self.capturer_image()
+                if not ret:
+                    print("[ERREUR] Impossible de lire la caméra.")
+                    time.sleep(0.1)
+                    continue
+                    
+                print("\nAnalyse en cours...")
+                resultat = self.detecter_mauvaise_herbe(frame, seuil_certitude=0.5)
+                
+                print(f"-> Résultat du traitement : {resultat}")
+                                
+        except KeyboardInterrupt:
+            print("\n[!] Fin du test manuel de l'IA.")
+        finally:
+            self.cap.release()
+
 if __name__ == '__main__':
     controleur = VisionController()
-    controleur.lancer_routine_vision()
+    controleur.tester_ia_seule()

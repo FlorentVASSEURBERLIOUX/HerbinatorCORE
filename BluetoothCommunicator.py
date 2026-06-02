@@ -1,6 +1,7 @@
 import socket
 import json
 import time
+import subprocess
 
 class BluetoothCommunicator:
     def __init__(self, port=1):
@@ -11,23 +12,30 @@ class BluetoothCommunicator:
         self.client_info = None
 
         try:
-            self.server_sock.bind(("", self.port))
+            try:
+                out = subprocess.check_output(['bluetoothctl', 'list']).decode('utf-8')
+                mac_address = out.split()[1]
+            except Exception:
+                mac_address = "00:00:00:00:00:00"
+            self.server_sock.bind((mac_address, self.port))
             self.server_sock.listen(1)
-            print(f"[BLUETOOTH] Port {self.port}).")
+            print(f"[BLUETOOTH] Serveur démarré sur {mac_address} (Port {self.port}).")
         except Exception as e:
-            print(f"[ERREUR] {e}")
+            print(f"[ERREUR INIT BLUETOOTH] {e}")
+            raise SystemExit
 
     def attendre_connexion(self):
         """Met le programme en pause jusqu'à ce que l'application mobile se connecte."""
+        print("[BLUETOOTH] En attente de l'application...")
         try:
             self.client_sock, self.client_info = self.server_sock.accept()
             
             self.client_sock.settimeout(0.05) 
             
-            print(f"[BLUETOOTH] Connecté {self.client_info}")
+            print(f"[BLUETOOTH] Connecté à {self.client_info}")
             return True
         except Exception as e:
-            print(f"[ERREUR] {e}")
+            print(f"[ERREUR CONNEXION] {e}")
             return False
 
     def envoyer(self, donnees_dict):
@@ -37,7 +45,7 @@ class BluetoothCommunicator:
                 message = json.dumps(donnees_dict) + "\n"
                 self.client_sock.send(message.encode('utf-8'))
             except Exception as e:
-                print(f"[ERREUR] {e}")
+                print(f"[ERREUR ENVOI] {e}")
                 self.client_sock = None
 
     def recevoir(self):
@@ -53,7 +61,7 @@ class BluetoothCommunicator:
             except socket.timeout:
                 return None
             except Exception as e:
-                print(f"[ERREUR] {e}")
+                print(f"[ERREUR RECEPTION] {e}")
                 self.client_sock = None
         return None
 
