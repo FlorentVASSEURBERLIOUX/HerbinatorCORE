@@ -12,7 +12,9 @@ class VisionController:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         
-        self.qr_detector = cv2.QRCodeDetector()
+        dictionnaire = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        parametres = cv2.aruco.DetectorParameters()
+        self.aruco_detector = cv2.aruco.ArucoDetector(dictionnaire, parametres)        
         
         self.robot = ArduinoCommunicator(port='/dev/ttyACM0')
         self.bluetooth = BluetoothCommunicator(port=1)
@@ -34,24 +36,29 @@ class VisionController:
         ret, frame = self.cap.read()
         return ret, frame
 
-    def chercher_limite_qrcode(self, image):
-        data, bbox, _ = self.qr_detector.detectAndDecode(image)
+    def chercher_limite_qr(self, image):
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        if data and bbox is not None:
-            coins = bbox[0]
+        corners, ids, rejected = self.aruco_detector.detectMarkers(gray)
+        
+        if ids is not None and len(ids) > 0:
+            id_trouve = ids[0][0]
+            coins = corners[0][0]
+            
             centre_x = int((coins[0][0] + coins[2][0]) / 2)
             centre_y = int((coins[0][1] + coins[2][1]) / 2)
+            
             largeur = int(abs(coins[1][0] - coins[0][0]))
             hauteur = int(abs(coins[3][1] - coins[0][1]))
             
-            infos_qr = {
-                "texte": data,
+            infos_aruco = {
+                "texte": f"ID_{id_trouve}",
                 "position_x": centre_x,
                 "position_y": centre_y,
                 "largeur_px": largeur,
                 "hauteur_px": hauteur
             }
-            return True, infos_qr
+            return True, infos_aruco
             
         return False, None
 
@@ -71,7 +78,6 @@ class VisionController:
                     return True
         
                 print(f"Certitude : {certitude:.1f}%")
-
                     
         return False
 
@@ -99,7 +105,8 @@ class VisionController:
                     if not ret:
                         print("[ERREUR] Pas d'image prise")
                     else:
-                        qr_trouve, infos_qr = self.chercher_limite_qrcode(frame)
+                        # CORRECTION ICI : chercher_limite_qr
+                        qr_trouve, infos_qr = self.chercher_limite_qr(frame)
                         
                         if qr_trouve:
                             t = infos_qr["texte"]
@@ -120,7 +127,6 @@ class VisionController:
                 donnees_arduino = self.robot.recevoir()
                 
                 if donnees_arduino:
-                    # On s'attend au format : "DATA:EncG:EncD:UsFace:UsGauche:UsDroit"
                     if donnees_arduino.startswith("DATA:"):
                         parts = donnees_arduino.split(":")
                         if len(parts) == 6:
@@ -166,6 +172,40 @@ class VisionController:
         finally:
             self.cap.release()
 
+    def tester_qr_seul(self):
+        """Méthode de test minimaliste : Caméra + QR Code (ArUco) uniquement."""
+        print("\n==================================================")
+        print(" MODE TEST : Caméra et QR Code (Sans Arduino/Bluetooth/IA)")
+        print("==================================================")
+        try:
+            while True:
+                ret, frame = self.capturer_image()
+                if not ret:
+                    print("[ERREUR] Impossible de lire la caméra.")
+                    time.sleep(1)
+                    continue
+                    
+                print("\nRecherche de Tag ArUco en cours...")
+                # CORRECTION ICI AUSSI : chercher_limite_qr
+                qr_trouve, infos_qr = self.chercher_limite_qr(frame)
+                
+                if qr_trouve:
+                    print(f"-> [SUCCÈS] Tag détecté !")
+                    print(f"   Texte    : '{infos_qr['texte']}'")
+                    print(f"   Position : X={infos_qr['position_x']}, Y={infos_qr['position_y']}")
+                    print(f"   Taille   : {infos_qr['largeur_px']} x {infos_qr['hauteur_px']} pixels")
+                else:
+                    print("-> [INFO] Aucun Tag visible dans le champ.")
+                
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            print("\n[!] Fin du test manuel.")
+        finally:
+            self.cap.release()
+
 if __name__ == '__main__':
     controleur = VisionController()
-    controleur.tester_ia_seule()
+    
+    #controleur.tester_ia_seule()
+    controleur.tester_qr_seul()
