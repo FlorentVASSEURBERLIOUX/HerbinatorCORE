@@ -16,7 +16,7 @@ class VisionController:
         parametres = cv2.aruco.DetectorParameters()
         self.aruco_detector = cv2.aruco.ArucoDetector(dictionnaire, parametres)        
         
-        self.robot = ArduinoCommunicator(port='/dev/ttyACM0')
+        #self.robot = ArduinoCommunicator(port='/dev/ttyACM0')
         self.bluetooth = BluetoothCommunicator(port=1)
         
         self.en_veille = False
