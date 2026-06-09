@@ -92,6 +92,34 @@ class Cartographie:
         plt.tight_layout()
         plt.show()
 
+    def sauvegarder_carte(self, nom_fichier="carte_herbinator.png"):
+        """Sauvegarde la carte en tant qu'image PNG sans bloquer le programme."""
+        import matplotlib
+        matplotlib.use('Agg') # Force Matplotlib à travailler en arrière-plan (sans écran)
+        
+        cmap = mcolors.ListedColormap(['#e2e8f0', '#ffffff', '#ef4444', '#10b981'])
+        bounds = [0, 1, 2, 3, 4]
+        norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+        ratio = self.lignes / self.colonnes
+        largeur_fenetre = 8
+        hauteur_fenetre = largeur_fenetre * ratio
+
+        fig, ax = plt.subplots(figsize=(largeur_fenetre, hauteur_fenetre))
+        ax.imshow(self.grille, cmap=cmap, norm=norm, origin='lower', aspect='equal')
+        
+        ax.set_xticks(np.arange(-.5, self.colonnes + 0.5, 1), minor=True)
+        ax.set_yticks(np.arange(-.5, self.lignes + 0.5, 1), minor=True)
+        ax.grid(which="minor", color="black", linestyle='-', linewidth=0.5, alpha=0.3)
+        ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
+        
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+            
+        plt.tight_layout()
+        plt.savefig(nom_fichier, bbox_inches='tight', pad_inches=0, dpi=100)
+        plt.close(fig) # TRÈS IMPORTANT : Libère la mémoire RAM du Raspberry Pi
+
 # ==========================================
 # EXEMPLE D'UTILISATION (SIMULATION DU ROBOT)
 # ==========================================

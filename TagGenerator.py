@@ -4,7 +4,7 @@ import os
 dictionnaire = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 
 print("Génération des 26 Tags ArUco en cours...")
-for i in range(26):
+for i in range(22):
     tag_image = cv2.aruco.generateImageMarker(dictionnaire, i, 400)
     
     tag_image = cv2.copyMakeBorder(tag_image, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[255, 255, 255])
