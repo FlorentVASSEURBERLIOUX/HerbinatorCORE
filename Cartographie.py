@@ -1,7 +1,9 @@
 import numpy as np
+import math
+import matplotlib
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import math
 
 class Cartographie:
     def __init__(self, taille_terrain_cm, resolution_cm):
@@ -94,9 +96,7 @@ class Cartographie:
 
     def sauvegarder_carte(self, nom_fichier="carte_herbinator.png"):
         """Sauvegarde la carte en tant qu'image PNG sans bloquer le programme."""
-        import matplotlib
-        matplotlib.use('Agg') # Force Matplotlib à travailler en arrière-plan (sans écran)
-        
+
         cmap = mcolors.ListedColormap(['#e2e8f0', '#ffffff', '#ef4444', '#10b981'])
         bounds = [0, 1, 2, 3, 4]
         norm = mcolors.BoundaryNorm(bounds, cmap.N)

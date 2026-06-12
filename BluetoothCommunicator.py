@@ -1,94 +1,103 @@
-import socket
 import json
 import time
-import subprocess
+from bluedot.btcomm import BluetoothServer
 
 class BluetoothCommunicator:
     def __init__(self, port=1):
-        """Initialise le serveur Bluetooth RFCOMM."""
-        self.port = port
-        self.server_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-        self.client_sock = None
-        self.client_info = None
+        """Initialise le serveur Bluetooth de manière asynchrone avec BlueDot."""
+        self.dernier_message = None
+        
+        print("[BLUETOOTH] Initialisation de l'antenne avec BlueDot...")
+        self.server = BluetoothServer(
+            data_received_callback=self._quand_message_recu,
+            when_client_connects=self._quand_connecte,
+            when_client_disconnects=self._quand_deconnecte
+        )
+        print("[BLUETOOTH] Serveur prêt.")
 
-        try:
-            try:
-                out = subprocess.check_output(['bluetoothctl', 'list']).decode('utf-8')
-                mac_address = out.split()[1]
-            except Exception:
-                mac_address = "00:00:00:00:00:00"
-            self.server_sock.bind((mac_address, self.port))
-            self.server_sock.listen(1)
-            print(f"[BLUETOOTH] Serveur démarré sur {mac_address} (Port {self.port}).")
-        except Exception as e:
-            print(f"[ERREUR INIT BLUETOOTH] {e}")
-            raise SystemExit
+    def _quand_connecte(self):
+        print("[BLUETOOTH] Application Flutter connectée !")
+
+    def _quand_deconnecte(self):
+        print("[BLUETOOTH] Application déconnectée.")
+
+    def _quand_message_recu(self, data):
+        """Callback interne déclenché instantanément quand le téléphone parle."""
+        message = data.strip()
+        if message:
+            self.dernier_message = message
 
     def attendre_connexion(self):
         """Met le programme en pause jusqu'à ce que l'application mobile se connecte."""
         print("[BLUETOOTH] En attente de l'application...")
         try:
-            self.client_sock, self.client_info = self.server_sock.accept()
-            
-            self.client_sock.settimeout(0.05) 
-            
-            print(f"[BLUETOOTH] Connecté à {self.client_info}")
+            while not self.server.client_connected:
+                time.sleep(0.1)
             return True
-        except Exception as e:
-            print(f"[ERREUR CONNEXION] {e}")
+        except KeyboardInterrupt:
             return False
 
     def envoyer(self, donnees_dict):
-        """Convertit un dictionnaire en JSON et l'envoie à l'application."""
-        if self.client_sock:
+        """Convertit le dictionnaire de télémétrie en JSON strict et l'envoie."""
+        if self.server.client_connected:
             try:
-                message = json.dumps(donnees_dict) + "\n"
-                self.client_sock.send(message.encode('utf-8'))
+                self.server.send(message_json)
             except Exception as e:
-                print(f"[ERREUR ENVOI] {e}")
-                self.client_sock = None
+                print(f"[ERREUR ENVOI BLUETOOTH] {e}")
 
     def recevoir(self):
         """
-        Vérifie si le téléphone a envoyé un message. 
-        S'exécute instantanément (non-bloquant). Retourne le texte ou None.
+        Consulte la boîte de réception. Fonction non-bloquante idéale pour 
+        la boucle vidéo (VisionController) qui doit tourner à haut FPS.
         """
-        if self.client_sock:
-            try:
-                data = self.client_sock.recv(1024)
-                if data:
-                    return data.decode('utf-8').strip()
-            except socket.timeout:
-                return None
-            except Exception as e:
-                print(f"[ERREUR RECEPTION] {e}")
-                self.client_sock = None
+        if self.dernier_message is not None:
+            msg = self.dernier_message
+            self.dernier_message = None
+            return msg
         return None
 
     def fermer(self):
-        """Ferme les ports de communication proprement."""
-        if self.client_sock:
-            self.client_sock.close()
-        if self.server_sock:
-            self.server_sock.close()
+        """Coupe proprement l'antenne Bluetooth à l'arrêt du robot."""
+        if self.server:
+            self.server.stop()
 
 
 if __name__ == '__main__':
     bt = BluetoothCommunicator()
     
     if bt.attendre_connexion():
-        print("'STOP' pour arrêter.")
+        print("Début du test. Lance ton application FlutterFlow !")
+        print("(Appuie sur Ctrl+C pour arrêter le test)")
+        
+        start_time_global = time.time()
+        distance_simulee = 0
+        herbe_simulee = 0
+        
         try:
             while True:
                 commande_app = bt.recevoir()
                 if commande_app:
-                    print(f"-> Message de l'appli : {commande_app}")
-                    if commande_app.upper() == "STOP":
-                        break
+                    print(f"-> Ordre reçu de l'application : {commande_app}")
+
+                telemetrie = {
+                    "OperationTime": int(time.time() - start_time_global), # Int (Secondes)
+                    "Tours": False,                                        # Bool
+                    "Distance": int(distance_simulee),                     # Int (Centimètres)
+                    "NbHerbe": int(herbe_simulee),                         # Int
+                    "Batterie PI": 0.85                                    # Double (0 à 1)
+                }
                 
-                donnees_test = {"statut": "en_marche", "batterie": 85, "herbe_detectee": False}
-                bt.envoyer(donnees_test)
+                bt.envoyer(telemetrie)
+                print(f"Télémétrie envoyée : {telemetrie}")
                 
+                distance_simulee += 1.5
+                if int(distance_simulee) % 15 == 0:
+                    herbe_simulee += 1
+                    
                 time.sleep(1)
-        finally:
+                
+        except KeyboardInterrupt:
+            print("\nFin du test demandée.")
+        
+                message_json = json.dumps(donnfinally:
             bt.fermer()

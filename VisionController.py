@@ -74,22 +74,32 @@ class VisionController:
     def detecter_mauvaise_herbe(self, image, seuil_certitude=0.5):
         if self.modele_ia is None:
             return False, 0, 0
+            
         resultats = self.modele_ia(image, verbose=False)
+        
         for r in resultats:
             for boite in r.boxes:
                 certitude = float(boite.conf[0]) * 100 
+                
                 if certitude >= seuil_certitude:
                     x1, y1, x2, y2 = boite.xyxy[0]
+                    
                     centre_x = int((x1 + x2) / 2)
+                    centre_y = int((y1 + y2) / 2)
+                    
                     angle = int(((centre_x - 320) / 320.0) * 45)
-                    distance = 50 
-                    print(f"[IA] Herbe ciblée ! (Angle: {angle}° | Dist: {distance}cm)")
+                    
+                    distance_pixels = math.sqrt((centre_x - 320)**2 + (centre_y - 480)**2)
+                    distance = int(distance_pixels)
+                    
+                    print(f"[IA] Herbe ciblée ! (Angle: {angle}° | Dist: {distance}px)")
                     return True, angle, distance
+                    
         return False, 0, 0
 
     def lancer_routine_vision(self, fps=1.0):
         print(" Démarrage de la routine de vision")
-        self.bluetooth.attendre_connexion()
+        #self.bluetooth.attendre_connexion()
         
         try:
             while True:
@@ -148,7 +158,8 @@ class VisionController:
                 if not self.en_veille:
                     self.carte.mettre_a_jour(self.x_robot, self.y_robot, self.cap_degres, dist_obstacle_cm=dist_obs, cible_yolo_detectee=herbe_trouvee)
                     
-                    self.carte.sauvegarder_carte("carte_herbinator.png")
+                    if int(time.time()) % 60 == 0:
+                        self.carte.sauvegarder_carte("carte_herbinator.png")
 
                 telemetrie_app = {
                     "OperationTime": int(time.time() - self.start_time_global),
@@ -228,3 +239,4 @@ if __name__ == '__main__':
     
     #controleur.tester_ia_seule()
     #controleur.tester_qr_seul()
+    controleur.lancer_routine_vision()
