@@ -99,5 +99,3 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             print("\nFin du test demandée.")
         
-                message_json = json.dumps(donnfinally:
-            bt.fermer()

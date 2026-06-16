@@ -3,7 +3,7 @@ import time
 import random
 import math
 from ultralytics import YOLO
-
+import os
 from ArduinoCommunicator import ArduinoCommunicator
 from BluetoothCommunicator import BluetoothCommunicator
 from Cartographie import Cartographie
@@ -133,6 +133,11 @@ class VisionController:
                             if herbe_trouvee:
                                 self.nb_herbe += 1 
                                 self.robot.send(f"P:{angle}:{distance}")
+
+                                timestamp = time.strftime("%H%M%S") # Heure, Minute, Seconde
+                                nom_fichier = f"img_test/herbe_n{self.nb_herbe}_{timestamp}.jpg"
+                                cv2.imwrite(nom_fichier, frame)
+                                print(f"[VISION] Capture enregistrée : {nom_fichier}")
 
                 donnees_arduino = self.robot.recevoir()
                 dist_obs = None
