@@ -41,7 +41,7 @@ class BluetoothCommunicator:
         """Convertit le dictionnaire de télémétrie en JSON strict et l'envoie."""
         if self.server.client_connected:
             try:
-                self.server.send(message_json)
+                self.server.send(donnees_dict)
             except Exception as e:
                 print(f"[ERREUR ENVOI BLUETOOTH] {e}")
 

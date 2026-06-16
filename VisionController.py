@@ -3,7 +3,6 @@ import time
 import random
 import math
 from ultralytics import YOLO
-import os
 from ArduinoCommunicator import ArduinoCommunicator
 from BluetoothCommunicator import BluetoothCommunicator
 from Cartographie import Cartographie
@@ -99,7 +98,7 @@ class VisionController:
 
     def lancer_routine_vision(self, fps=1.0):
         print(" Démarrage de la routine de vision")
-        #self.bluetooth.attendre_connexion()
+        self.bluetooth.attendre_connexion()
         
         try:
             while True:
@@ -133,11 +132,6 @@ class VisionController:
                             if herbe_trouvee:
                                 self.nb_herbe += 1 
                                 self.robot.send(f"P:{angle}:{distance}")
-
-                                timestamp = time.strftime("%H%M%S") # Heure, Minute, Seconde
-                                nom_fichier = f"img_test/herbe_n{self.nb_herbe}_{timestamp}.jpg"
-                                cv2.imwrite(nom_fichier, frame)
-                                print(f"[VISION] Capture enregistrée : {nom_fichier}")
 
                 donnees_arduino = self.robot.recevoir()
                 dist_obs = None
@@ -244,4 +238,4 @@ if __name__ == '__main__':
     
     #controleur.tester_ia_seule()
     #controleur.tester_qr_seul()
-    controleur.lancer_routine_vision()
+    controleur.lancer_routine_vision(sans_app=True)
