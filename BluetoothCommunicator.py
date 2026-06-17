@@ -1,55 +1,77 @@
+import socket
+import threading
 import json
 import time
-from bluedot.btcomm import BluetoothServer
 
 class BluetoothCommunicator:
     def __init__(self, port=1):
-        """Initialise le serveur Bluetooth de manière asynchrone avec BlueDot."""
+        self.port = port
+        self.server_sock = None
+        self.client_sock = None
+        self.client_info = None
         self.dernier_message = None
-        
-        print("[BLUETOOTH] Initialisation de l'antenne avec BlueDot...")
-        self.server = BluetoothServer(
-            data_received_callback=self._quand_message_recu,
-            when_client_connects=self._quand_connecte,
-            when_client_disconnects=self._quand_deconnecte
-        )
-        print("[BLUETOOTH] Serveur prêt.")
+        self.connecte = False
+        self.thread_ecoute = None
 
-    def _quand_connecte(self):
-        print("[BLUETOOTH] Application Flutter connectée !")
-
-    def _quand_deconnecte(self):
-        print("[BLUETOOTH] Application déconnectée.")
-
-    def _quand_message_recu(self, data):
-        """Callback interne déclenché instantanément quand le téléphone parle."""
-        message = data.strip()
-        if message:
-            self.dernier_message = message
-
-    def attendre_connexion(self):
-        """Met le programme en pause jusqu'à ce que l'application mobile se connecte."""
-        print("[BLUETOOTH] En attente de l'application...")
+    def demarrer_serveur(self):
+        print(f"[BLUETOOTH] Ouverture de l'antenne sur le port {self.port}...")
         try:
-            while not self.server.client_connected:
-                time.sleep(0.1)
+            self.server_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+            self.server_sock.bind((socket.BDADDR_ANY, self.port))
+            self.server_sock.listen(1)
+            print("[BLUETOOTH] Serveur prêt. En attente de l'application Flutter...")
             return True
-        except KeyboardInterrupt:
+        except Exception as e:
+            print(f"[ERREUR BLUETOOTH] Impossible de créer le serveur : {e}")
             return False
 
-    def envoyer(self, donnees_dict):
-        """Convertit le dictionnaire de télémétrie en JSON strict et l'envoie."""
-        if self.server.client_connected:
+    def attendre_connexion(self):
+        """Met le script en pause tant que le téléphone n'est pas connecté."""
+        if not self.demarrer_serveur():
+            return False
+            
+        try:
+            # Le code s'arrête ici et attend le téléphone
+            self.client_sock, self.client_info = self.server_sock.accept()
+            self.connecte = True
+            print(f"[BLUETOOTH] ✅ Application connectée : {self.client_info}")
+            
+            # On lance un thread (tâche de fond) pour écouter sans bloquer la vidéo
+            self.thread_ecoute = threading.Thread(target=self._ecouter_client, daemon=True)
+            self.thread_ecoute.start()
+            return True
+        except Exception as e:
+            print(f"[ERREUR BLUETOOTH] Échec de la connexion : {e}")
+            return False
+
+    def _ecouter_client(self):
+        """Tourne en boucle en arrière-plan pour intercepter les ordres de l'app."""
+        while self.connecte and self.client_sock:
             try:
-                self.server.send(donnees_dict)
+                data = self.client_sock.recv(1024)
+                if not data:
+                    break # Si on reçoit du vide, c'est que le client a quitté
+                message = data.decode("utf-8").strip()
+                if message:
+                    self.dernier_message = message
+            except:
+                break # En cas de coupure brutale
+                
+        self.connecte = False
+        print("[BLUETOOTH] ❌ Application déconnectée.")
+
+    def envoyer(self, donnees_dict):
+        """Convertit les données en JSON et les envoie au téléphone."""
+        if self.connecte and self.client_sock:
+            try:
+                message_json = json.dumps(donnees_dict) + "\n"
+                self.client_sock.send(message_json.encode("utf-8"))
             except Exception as e:
                 print(f"[ERREUR ENVOI BLUETOOTH] {e}")
+                self.connecte = False
 
     def recevoir(self):
-        """
-        Consulte la boîte de réception. Fonction non-bloquante idéale pour 
-        la boucle vidéo (VisionController) qui doit tourner à haut FPS.
-        """
+        """Vide la boîte de réception pour que VisionController puisse la lire."""
         if self.dernier_message is not None:
             msg = self.dernier_message
             self.dernier_message = None
@@ -57,45 +79,12 @@ class BluetoothCommunicator:
         return None
 
     def fermer(self):
-        """Coupe proprement l'antenne Bluetooth à l'arrêt du robot."""
-        if self.server:
-            self.server.stop()
-
-
-if __name__ == '__main__':
-    bt = BluetoothCommunicator()
-    
-    if bt.attendre_connexion():
-        print("Début du test. Lance ton application FlutterFlow !")
-        print("(Appuie sur Ctrl+C pour arrêter le test)")
-        
-        start_time_global = time.time()
-        distance_simulee = 0
-        herbe_simulee = 0
-        
-        try:
-            while True:
-                commande_app = bt.recevoir()
-                if commande_app:
-                    print(f"-> Ordre reçu de l'application : {commande_app}")
-
-                telemetrie = {
-                    "OperationTime": int(time.time() - start_time_global), # Int (Secondes)
-                    "Tours": False,                                        # Bool
-                    "Distance": int(distance_simulee),                     # Int (Centimètres)
-                    "NbHerbe": int(herbe_simulee),                         # Int
-                    "Batterie PI": 0.85                                    # Double (0 à 1)
-                }
-                
-                bt.envoyer(telemetrie)
-                print(f"Télémétrie envoyée : {telemetrie}")
-                
-                distance_simulee += 1.5
-                if int(distance_simulee) % 15 == 0:
-                    herbe_simulee += 1
-                    
-                time.sleep(1)
-                
-        except KeyboardInterrupt:
-            print("\nFin du test demandée.")
-        
+        """Coupe proprement toutes les connexions."""
+        self.connecte = False
+        if self.client_sock:
+            try: self.client_sock.close()
+            except: pass
+        if self.server_sock:
+            try: self.server_sock.close()
+            except: pass
+        print("[BLUETOOTH] Portes fermées.")
