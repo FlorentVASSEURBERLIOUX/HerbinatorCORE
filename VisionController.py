@@ -12,7 +12,13 @@ from BluetoothCommunicator import BluetoothCommunicator
 from Cartographie import Cartographie
 
 class VisionController:
-    def __init__(self, sans_app=False): 
+    # --- PARAMÈTRES DE TAILLE ET INITIALISATION BLUETOOTH ---
+    def __init__(self, sans_app=False, taille_terrain_cm=(300, 300), resolution_cm=10): 
+        print("[BLUETOOTH] Exécution de ./init_bluetooth.sh...")
+        os.system("./init_bluetooth.sh")
+        print("[BLUETOOTH] Attente de 2 secondes pour l'activation de l'antenne...")
+        time.sleep(2)
+        
         self.sans_app = sans_app
         self.moy_cert = [0,0]
         
@@ -76,13 +82,26 @@ class VisionController:
         self.start_time_global = time.time()
         self.nb_herbe = 0
         self.distance_cm = 0
-        self.carte = Cartographie((300, 300), 10) 
+        self.carte = Cartographie(taille_terrain_cm, resolution_cm) 
         self.x_robot = 150.0 
         self.y_robot = 20.0
         self.cap_degres = 90.0
         self.last_encG = 0
         self.last_encD = 0
         self.cm_par_tick = 0.02
+
+        # --- SUIVI DES OBSTACLES DU CAPTEUR DE FACE ---
+        self.nb_obstacles = 0
+        self.obstacle_en_cours = False
+
+        # --- SUIVI DES QR CODES DE QR_NEW ---
+        self.qr_trouves = set()
+        try:
+            self.total_qr = len([f for f in os.listdir("QR_new") if f.endswith('.png')])
+        except:
+            self.total_qr = 26
+        if self.total_qr == 0:
+            self.total_qr = 26
 
     def encoder_image_b64(self, chemin_fichier):
         if not os.path.exists(chemin_fichier):
@@ -164,6 +183,15 @@ class VisionController:
                         self.en_veille = True
                     elif commande_app == "START":
                         self.en_veille = False
+                    elif commande_app == "RESET":
+                        self.distance_cm = 0.0
+                        self.start_time_global = time.time()
+                        self.nb_herbe = 0
+                        self.moy_cert = [0, 0]
+                        self.nb_obstacles = 0
+                        self.obstacle_en_cours = False
+                        self.qr_trouves.clear()
+                        print("[BLUETOOTH] 🔄 Réinitialisation des compteurs effectuée.")
 
                 # --- VISION ET ARDUINO ---
                 if not self.en_veille:
@@ -173,9 +201,21 @@ class VisionController:
                         
                         qr_trouve, infos_qr = self.chercher_limite_qr(frame)
                         if qr_trouve:
-                            if self.robot: self.robot.send(f"B:{infos_qr['texte']}:{infos_qr['largeur_px']}:{infos_qr['hauteur_px']}:{infos_qr['position_x']}:{infos_qr['position_y']}")
-                            self.cap_degres = (self.cap_degres + 180) % 360
-                            print(f"[NAV] Bordure vue ({infos_qr['texte']}), nouveau cap : {self.cap_degres}°")
+                            index_attendu = len(self.qr_trouves)
+                            nom_attendu = f"H{index_attendu // 2 + 1}" if index_attendu % 2 == 0 else f"B{index_attendu // 2 + 1}"
+                            
+                            nom_decouvert = infos_qr['texte'].replace("ID_", "")
+                            
+                            if nom_decouvert == nom_attendu and infos_qr['position_y'] < 5000000:
+                                self.qr_trouves.add(infos_qr['texte'])
+                                
+                                if self.robot: 
+                                    self.robot.send(f"B:{infos_qr['texte']}:{infos_qr['largeur_px']}:{infos_qr['hauteur_px']}:{infos_qr['position_x']}:{infos_qr['position_y']}")
+                                self.cap_degres = (self.cap_degres + 180) % 360
+                                print(f"[NAV] Séquence validée ! Bordure vue ({infos_qr['texte']}), nouveau cap : {self.cap_degres}°")
+                            else:
+                                # Le tag est soit hors-séquence, soit trop loin sur l'axe Y (Y >= 200)
+                                print(f"[NAV] QR Code ignoré ou en attente ({infos_qr['texte']} | Y:{infos_qr['position_y']}), attendu: {nom_attendu} à Y<200")
                         else:
                             herbe_trouvee, angle, distance = self.detecter_mauvaise_herbe(frame)
                             if herbe_trouvee:
@@ -202,7 +242,15 @@ class VisionController:
                             cap_rad = math.radians(self.cap_degres)
                             self.x_robot += avancee_cm * math.cos(cap_rad)
                             self.y_robot += avancee_cm * math.sin(cap_rad)
-                            if int(parts[3]) == 1: dist_obs = 15 
+                            
+                            dist_front = int(parts[3])
+                            if dist_front != -1:
+                                dist_obs = dist_front
+                                if not self.obstacle_en_cours:
+                                    self.nb_obstacles += 1
+                                    self.obstacle_en_cours = True
+                            else:
+                                self.obstacle_en_cours = False
                 
                 if not self.en_veille:
                     self.carte.mettre_a_jour(self.x_robot, self.y_robot, self.cap_degres, dist_obstacle_cm=dist_obs, cible_yolo_detectee=herbe_trouvee)
@@ -219,14 +267,19 @@ class VisionController:
                         carto_b64_cache = self.encoder_image_b64("carto.png")
                         last_carto_time = now
 
+                    col_case, lig_case = self.carte.coord_vers_indices(self.x_robot, self.y_robot)
+
                     telemetrie = {
-                        "coorApp": f"X:{int(self.x_robot)} Y:{int(self.y_robot)}",
+                        "coorApp": f"X:{col_case} Y:{lig_case}",
                         "aiApp": f"{self.moy_cert[1]:.2f}%",
                         "herbeApp": self.nb_herbe,
-                        "obsApp": 0 if dist_obs is None else 1,
+                        "obsApp": self.nb_obstacles,
                         "timeApp": int(time.time() - self.start_time_global),
-                        "terrainApp": 24.5,
-                        "pourcentApp": 0.82,
+                        "terrainApp": self.carte.obtenir_surface_exploree_m2(),
+                        
+                        # --- LA BARRE DE PROGRESSION REFLETE UNIQUEMENT LES QR VALIDÉS EN SÉQUENCE ---
+                        "pourcentApp": round(len(self.qr_trouves) / self.total_qr, 2),
+                        
                         "distanceApp": round(self.distance_cm, 1),
                         "photoRecue": photo_b64_cache, 
                         "cartoRecue": carto_b64_cache   

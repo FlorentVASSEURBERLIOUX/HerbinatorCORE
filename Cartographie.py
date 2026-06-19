@@ -69,25 +69,18 @@ class Cartographie:
         bounds = [0, 1, 2, 3, 4]
         norm = mcolors.BoundaryNorm(bounds, cmap.N)
 
-        # CORRECTION 1 : Calcul de la taille de la fenêtre pour respecter les proportions
         ratio = self.lignes / self.colonnes
         largeur_fenetre = 10
         hauteur_fenetre = largeur_fenetre * ratio
 
         fig, ax = plt.subplots(figsize=(largeur_fenetre, hauteur_fenetre))
-        
-        # CORRECTION 2 : Forcer aspect='equal' pour avoir des carrés parfaits
         ax.imshow(self.grille, cmap=cmap, norm=norm, origin='lower', aspect='equal')
         
-        # CORRECTION 3 : + 0.5 ajouté pour que la grille aille bien jusqu'au bout du dessin
         ax.set_xticks(np.arange(-.5, self.colonnes + 0.5, 1), minor=True)
         ax.set_yticks(np.arange(-.5, self.lignes + 0.5, 1), minor=True)
         ax.grid(which="minor", color="black", linestyle='-', linewidth=0.5, alpha=0.3)
-        
-        # Masquer les numéros des axes et les petites graduations
         ax.tick_params(which="both", bottom=False, left=False, labelbottom=False, labelleft=False)
         
-        # Masquer le cadre noir autour de l'image
         for spine in ax.spines.values():
             spine.set_visible(False)
             
@@ -96,7 +89,6 @@ class Cartographie:
 
     def sauvegarder_carte(self, nom_fichier="carte_herbinator.png"):
         """Sauvegarde la carte en tant qu'image PNG sans bloquer le programme."""
-
         cmap = mcolors.ListedColormap(['#e2e8f0', '#ffffff', '#ef4444', '#10b981'])
         bounds = [0, 1, 2, 3, 4]
         norm = mcolors.BoundaryNorm(bounds, cmap.N)
@@ -118,33 +110,18 @@ class Cartographie:
             
         plt.tight_layout()
         plt.savefig(nom_fichier, bbox_inches='tight', pad_inches=0, dpi=100)
-        plt.close(fig) # TRÈS IMPORTANT : Libère la mémoire RAM du Raspberry Pi
+        plt.close(fig)
 
-# ==========================================
-# EXEMPLE D'UTILISATION (SIMULATION DU ROBOT)
-# ==========================================
-if __name__ == "__main__":
-    # Initialisation d'un terrain de 300x200 cm, avec des cases de 10x10 cm
-    carte = Cartographie(taille_terrain_cm=(300, 300), resolution_cm=10)
+    def obtenir_surface_exploree_m2(self):
+        """Compte les cases découvertes (!= 0) et retourne la superficie en m²."""
+        nb_cases_explorees = np.count_nonzero(self.grille)
+        surface_une_case_m2 = (self.resolution / 100.0) ** 2
+        return round(nb_cases_explorees * surface_une_case_m2, 3)
 
-    # Simulation d'une trajectoire et d'événements
-    
-    # 1. Le robot avance tout droit (Cap 0°) et détecte un mur devant lui
-    carte.mettre_a_jour(x_robot=30, y_robot=50, cap_degres=0)
-    carte.mettre_a_jour(x_robot=40, y_robot=50, cap_degres=0)
-    carte.mettre_a_jour(x_robot=50, y_robot=50, cap_degres=0)
-    carte.mettre_a_jour(x_robot=60, y_robot=50, cap_degres=0)
-    carte.mettre_a_jour(x_robot=70, y_robot=50, cap_degres=0, dist_obstacle_cm=10) 
-    
-    # 2. Le robot esquive et monte (Cap 90°)
-    carte.mettre_a_jour(x_robot=70, y_robot=60, cap_degres=90)
-    carte.mettre_a_jour(x_robot=70, y_robot=70, cap_degres=90)
-    
-    # 3. L'IA repère une cible
-    carte.mettre_a_jour(x_robot=70, y_robot=80, cap_degres=90, cible_yolo_detectee=True)
-    
-    # 4. Le robot repart
-    carte.mettre_a_jour(x_robot=70, y_robot=90, cap_degres=90)
-    
-    # Affichage du résultat net et parfait
-    carte.afficher_carte_pure()
+    # --- SÉQUENCE UNIQUE AJOUTÉE : TRADUCTION COORDONNÉES REELLES VERS INDICES DE LA GRILLE ---
+    def coord_vers_indices(self, x_cm, y_cm):
+        """Retourne les indices de case (colonne, ligne) sous forme de tuple pour l'application."""
+        lig, col = self.coord_vers_grille(x_cm, y_cm)
+        if lig is not None and col is not None:
+            return col, lig
+        return 0, 0
