@@ -4,6 +4,7 @@ import math
 import os
 import sys
 import base64
+import numpy as np
 
 from ultralytics import YOLO
 
@@ -13,7 +14,7 @@ from Cartographie import Cartographie
 
 class VisionController:
     # --- PARAMÈTRES DE TAILLE ET INITIALISATION BLUETOOTH ---
-    def __init__(self, sans_app=False, taille_terrain_cm=(300, 300), resolution_cm=10): 
+    def __init__(self, sans_app=False, taille_terrain_cm=(150, 150), resolution_cm=10): 
         print("[BLUETOOTH] Exécution de ./init_bluetooth.sh...")
         os.system("./init_bluetooth.sh")
         print("[BLUETOOTH] Attente de 2 secondes pour l'activation de l'antenne...")
@@ -62,12 +63,16 @@ class VisionController:
             self.modele_ia = None
 
         # 3. FILAIRE ARDUINO
-        try:
-            self.robot = ArduinoCommunicator(port='/dev/ttyACM0')
-            print("[ARDUINO] Connecté sur /dev/ttyACM0")
-        except Exception as e:
-            print(f"[ATTENTION] Arduino non connecté sur /dev/ttyACM0 : {e}")
-            self.robot = None
+        self.robot = None
+        for port_test in ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']:
+            communicator = ArduinoCommunicator(port=port_test)
+            if communicator.arduino is not None:
+                self.robot = communicator
+                print(f"[ARDUINO] ✅ Connecté avec succès sur {port_test}")
+                break
+                
+        if self.robot is None:
+            print("[ATTENTION] ❌ Impossible de trouver l'Arduino. Vérifie le câble USB !")
 
         # 4. SANS FIL BLUETOOTH
         if not self.sans_app:
@@ -83,18 +88,22 @@ class VisionController:
         self.nb_herbe = 0
         self.distance_cm = 0
         self.carte = Cartographie(taille_terrain_cm, resolution_cm) 
-        self.x_robot = 150.0 
-        self.y_robot = 20.0
+        
+        # --- MODIFICATION 1 : DÉPART À L'ANGLE INFÉRIEUR GAUCHE (0,0 RELATIF) ---
+        # 5 cm place le robot exactement au centre de la toute première case (0,0)
+        self.x_robot = 5.0 
+        self.y_robot = 5.0
         self.cap_degres = 90.0
+        
         self.last_encG = 0
         self.last_encD = 0
         self.cm_par_tick = 0.02
+        self.pause_odo_time = 0
 
-        # --- SUIVI DES OBSTACLES DU CAPTEUR DE FACE ---
         self.nb_obstacles = 0
         self.obstacle_en_cours = False
+        self.last_weed_time = 0
 
-        # --- SUIVI DES QR CODES DE QR_NEW ---
         self.qr_trouves = set()
         try:
             self.total_qr = len([f for f in os.listdir("QR_new") if f.endswith('.png')])
@@ -160,6 +169,12 @@ class VisionController:
         print(" DÉMARRAGE DU CERVEAU HERBINATOR")
         print("==================================================")
         
+        if self.modele_ia is not None:
+            print("[IA] ⏳ Préchauffage de l'IA en cours (peut prendre 15 à 30 secondes)...")
+            image_vide = np.zeros((480, 640, 3), dtype=np.uint8)
+            self.modele_ia(image_vide, verbose=False)
+            print("[IA] ✅ Préchauffage terminé !")
+
         if not self.sans_app:
             self.bluetooth.attendre_connexion()
         
@@ -178,11 +193,19 @@ class VisionController:
                 # --- LECTURE BLUETOOTH ---
                 if not self.sans_app:
                     commande_app = self.bluetooth.recevoir()
-                    if commande_app == "VEILLE":
-                        if self.robot: self.robot.send("V")
+                    
+                    if commande_app == "STOP" or commande_app == "VEILLE":
+                        if self.robot:
+                            self.robot.send("V")
                         self.en_veille = True
+                        print("[BLUETOOTH] ⏸️ Ordre STOP reçu : Robot stoppé et RPi mis en veille.")
+                        
                     elif commande_app == "START":
+                        if self.robot:
+                            self.robot.send("S")
                         self.en_veille = False
+                        print("[BLUETOOTH] ▶️ Ordre START reçu : Robot démarré et RPi actif.")
+
                     elif commande_app == "RESET":
                         self.distance_cm = 0.0
                         self.start_time_global = time.time()
@@ -190,6 +213,7 @@ class VisionController:
                         self.moy_cert = [0, 0]
                         self.nb_obstacles = 0
                         self.obstacle_en_cours = False
+                        self.last_weed_time = 0
                         self.qr_trouves.clear()
                         print("[BLUETOOTH] 🔄 Réinitialisation des compteurs effectuée.")
 
@@ -197,60 +221,95 @@ class VisionController:
                 if not self.en_veille:
                     ret, frame = self.capturer_image()
                     if ret and frame is not None:
-                        print(f"[IA] Analyse en cours... {time.strftime('%H:%M:%S')}")
                         
                         qr_trouve, infos_qr = self.chercher_limite_qr(frame)
                         if qr_trouve:
-                            index_attendu = len(self.qr_trouves)
-                            nom_attendu = f"H{index_attendu // 2 + 1}" if index_attendu % 2 == 0 else f"B{index_attendu // 2 + 1}"
+                            id_int = int(infos_qr['texte'].replace("ID_", ""))
+                            id_attendu = len(self.qr_trouves) + 1 
                             
-                            nom_decouvert = infos_qr['texte'].replace("ID_", "")
-                            
-                            if nom_decouvert == nom_attendu and infos_qr['position_y'] < 5000000:
+                            if (id_attendu == id_int):
                                 self.qr_trouves.add(infos_qr['texte'])
                                 
                                 if self.robot: 
                                     self.robot.send(f"B:{infos_qr['texte']}:{infos_qr['largeur_px']}:{infos_qr['hauteur_px']}:{infos_qr['position_x']}:{infos_qr['position_y']}")
-                                self.cap_degres = (self.cap_degres + 180) % 360
-                                print(f"[NAV] Séquence validée ! Bordure vue ({infos_qr['texte']}), nouveau cap : {self.cap_degres}°")
-                            else:
-                                # Le tag est soit hors-séquence, soit trop loin sur l'axe Y (Y >= 200)
-                                print(f"[NAV] QR Code ignoré ou en attente ({infos_qr['texte']} | Y:{infos_qr['position_y']}), attendu: {nom_attendu} à Y<200")
-                        else:
-                            herbe_trouvee, angle, distance = self.detecter_mauvaise_herbe(frame)
-                            if herbe_trouvee:
-                                self.nb_herbe += 1 
-                                if self.robot: self.robot.send(f"P:{angle}:{distance}")
                                 
-                                nom_fichier = f"img_test/herbe_n{self.nb_herbe}_{time.strftime('%H%M%S')}.jpg"
-                                cv2.imwrite("photo.png", frame)
-                                print(f"[VISION] Capture de l'herbe sauvegardée : {nom_fichier}")
+                                self.x_robot += self.carte.resolution  
+                                self.cap_degres = (self.cap_degres + 180) % 360
+                                
+                                self.pause_odo_time = time.time() + 2.5
+                                
+                                print(f"[NAV] Séquence validée ! Bordure vue ({id_int} via {infos_qr['texte']}), nouveau cap : {self.cap_degres}°")
+                            else:
+                                pass # Suppression du print spammy "ignorer"
+                        else:
+                            if now - self.last_weed_time >= 10:
+                                herbe_trouvee, angle, distance = self.detecter_mauvaise_herbe(frame)
+                                if herbe_trouvee:
+                                    self.nb_herbe += 1 
+                                    if self.robot: 
+                                        self.robot.send(f"P:{angle}:{distance}")
+                                        
+                                    self.last_weed_time = now
+                                    
+                                    nom_fichier = f"img_test/herbe_n{self.nb_herbe}_{time.strftime('%H%M%S')}.jpg"
+                                    cv2.imwrite("photo.png", frame)
+                                    print(f"[VISION] Cible envoyée à l'Arduino. Capture : {nom_fichier}")
                     else:
                         print("[⚠️ ATTENTION] La caméra est active mais refuse de renvoyer un flux d'images.")
 
                 # --- ODOMÉTRIE ET CARTOGRAPHIE ---
                 dist_obs = None
-                if self.robot:
+                if self.robot and self.robot.arduino is not None:
                     donnees_arduino = self.robot.recevoir()
-                    if donnees_arduino and donnees_arduino.startswith("DATA:"):
-                        parts = donnees_arduino.split(":")
-                        if len(parts) == 6:
-                            encG, encD = int(parts[1]), int(parts[2])
-                            avancee_cm = (((encG - self.last_encG) + (encD - self.last_encD)) / 2.0) * self.cm_par_tick
-                            self.last_encG, self.last_encD = encG, encD
-                            self.distance_cm += avancee_cm
-                            cap_rad = math.radians(self.cap_degres)
-                            self.x_robot += avancee_cm * math.cos(cap_rad)
-                            self.y_robot += avancee_cm * math.sin(cap_rad)
-                            
-                            dist_front = int(parts[3])
-                            if dist_front != -1:
-                                dist_obs = dist_front
-                                if not self.obstacle_en_cours:
-                                    self.nb_obstacles += 1
-                                    self.obstacle_en_cours = True
-                            else:
-                                self.obstacle_en_cours = False
+                    if donnees_arduino:
+                        if donnees_arduino.startswith("DATA:"):
+                            parts = donnees_arduino.split(":")
+                            if len(parts) == 7:
+                                encG, encD = int(parts[1]), int(parts[2])
+                                
+                                if time.time() < self.pause_odo_time:
+                                    self.last_encG, self.last_encD = encG, encD
+                                    avancee_cm = 0.0
+                                else:
+                                    avancee_cm = (((encG - self.last_encG) + (encD - self.last_encD)) / 2.0) * self.cm_par_tick
+                                    self.last_encG, self.last_encD = encG, encD
+                                
+                                self.distance_cm += avancee_cm
+                                cap_rad = math.radians(self.cap_degres)
+                                self.x_robot += avancee_cm * math.cos(cap_rad)
+                                self.y_robot += avancee_cm * math.sin(cap_rad)
+                                
+                                dist_front = int(parts[3])
+                                flag_obstacle = int(parts[4])
+                                
+                                # --- MODIFICATION 2 : FORCER L'ÉCRITURE DE L'OBSTACLE ---
+                                if flag_obstacle == 1:
+                                    if not self.obstacle_en_cours:
+                                        self.nb_obstacles += 1
+                                        self.obstacle_en_cours = True
+                                        
+                                        # On force l'obstacle directement sur la grille pour ne pas le perdre
+                                        dist_obs_temporaire = dist_front if dist_front > 0 else self.carte.resolution
+                                        self.carte.forcer_obstacle(self.x_robot, self.y_robot, self.cap_degres, dist_obs_temporaire)
+                                        
+                                        cap_rad_gauche = math.radians(self.cap_degres + 90)
+                                        self.x_robot += self.carte.resolution * math.cos(cap_rad_gauche)
+                                        self.y_robot += self.carte.resolution * math.sin(cap_rad_gauche)
+                                        
+                                        self.pause_odo_time = time.time() + 2.5
+                                        
+                                    dist_obs = None 
+                                else:
+                                    if self.obstacle_en_cours:
+                                        self.obstacle_en_cours = False
+                                        
+                                        cap_rad_droite = math.radians(self.cap_degres - 90)
+                                        self.x_robot += self.carte.resolution * math.cos(cap_rad_droite)
+                                        self.y_robot += self.carte.resolution * math.sin(cap_rad_droite)
+                                        
+                                        self.pause_odo_time = time.time() + 2.5
+                                        
+                                    dist_obs = None
                 
                 if not self.en_veille:
                     self.carte.mettre_a_jour(self.x_robot, self.y_robot, self.cap_degres, dist_obstacle_cm=dist_obs, cible_yolo_detectee=herbe_trouvee)
@@ -276,10 +335,7 @@ class VisionController:
                         "obsApp": self.nb_obstacles,
                         "timeApp": int(time.time() - self.start_time_global),
                         "terrainApp": self.carte.obtenir_surface_exploree_m2(),
-                        
-                        # --- LA BARRE DE PROGRESSION REFLETE UNIQUEMENT LES QR VALIDÉS EN SÉQUENCE ---
                         "pourcentApp": round(len(self.qr_trouves) / self.total_qr, 2),
-                        
                         "distanceApp": round(self.distance_cm, 1),
                         "photoRecue": photo_b64_cache, 
                         "cartoRecue": carto_b64_cache   

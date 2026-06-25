@@ -28,7 +28,6 @@ class Cartographie:
         col = int(x_cm / self.resolution)
         lig = int(y_cm / self.resolution)
         
-        # Sécurité : vérifier que l'on reste dans les limites du tableau
         if 0 <= lig < self.lignes and 0 <= col < self.colonnes:
             return lig, col
         return None, None
@@ -46,11 +45,9 @@ class Cartographie:
         if cible_yolo_detectee:
             self.grille[lig_robot, col_robot] = 3
         
-        # 2. Déplacement standard : Marquer la case actuelle comme "Libre"
         elif self.grille[lig_robot, col_robot] == 0:
             self.grille[lig_robot, col_robot] = 1
 
-        # 3. Traitement du capteur à ultrasons : Enregistrer un obstacle
         if dist_obstacle_cm is not None and dist_obstacle_cm < 150: 
             # Calcul trigonométrique de la position de l'obstacle
             cap_rad = math.radians(cap_degres)
@@ -59,9 +56,20 @@ class Cartographie:
             
             lig_obs, col_obs = self.coord_vers_grille(x_obs, y_obs)
             if lig_obs is not None and col_obs is not None:
-                # On ne marque l'obstacle que si la case n'est pas déjà ciblée comme une plante
                 if self.grille[lig_obs, col_obs] != 3:
                     self.grille[lig_obs, col_obs] = 2
+
+    # --- MODIFICATION : NOUVELLE FONCTION ---
+    def forcer_obstacle(self, x_robot, y_robot, cap_degres, dist_obstacle_cm):
+        """Inscrit de force un obstacle rouge sur la carte (utilisé lors de l'esquive)"""
+        cap_rad = math.radians(cap_degres)
+        x_obs = x_robot + dist_obstacle_cm * math.cos(cap_rad)
+        y_obs = y_robot + dist_obstacle_cm * math.sin(cap_rad)
+        
+        lig_obs, col_obs = self.coord_vers_grille(x_obs, y_obs)
+        if lig_obs is not None and col_obs is not None:
+            if self.grille[lig_obs, col_obs] != 3:
+                self.grille[lig_obs, col_obs] = 2
 
     def afficher_carte_pure(self):
         """Affiche UNIQUEMENT la grille et les cellules, sans axes ni texte."""
@@ -118,7 +126,6 @@ class Cartographie:
         surface_une_case_m2 = (self.resolution / 100.0) ** 2
         return round(nb_cases_explorees * surface_une_case_m2, 3)
 
-    # --- SÉQUENCE UNIQUE AJOUTÉE : TRADUCTION COORDONNÉES REELLES VERS INDICES DE LA GRILLE ---
     def coord_vers_indices(self, x_cm, y_cm):
         """Retourne les indices de case (colonne, ligne) sous forme de tuple pour l'application."""
         lig, col = self.coord_vers_grille(x_cm, y_cm)
